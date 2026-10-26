@@ -15,6 +15,7 @@ const configFilePath = process.env.APIPROXY_CONFIG_FILE ?? 'apiproxy.conf'
 const proxyPort = Number(process.env.APIPROXY_PORT ?? '8080')
 const proxyTimeout = Number(process.env.APIPROXY_PROXY_TIMEOUT ?? '10000')
 const timeout = Number(process.env.APIPROXY_TIMEOUT ?? '15000')
+const maxBodySize = Number(process.env.APIPROXY_MAX_BODY_SIZE ?? '65536')
 const httpAgent = new http.Agent({ keepAlive: true })
 
 let shardedPathRegexp, globalPathRegexp
@@ -151,7 +152,7 @@ class ServersConfig {
       if (currentNode.serverUrl === undefined) {
         currentNode.serverUrl = serverRoute.serverUrl
       } else {
-        throw new ConfigError(`duplicated route "${this.dots(server.route)}"`)
+        throw new ConfigError(`duplicated route "${this.dots(serverRoute.route)}"`)
       }
     }
     ServersConfig.verifyTreeNode(rootNode)
@@ -255,14 +256,28 @@ function calcShardingKey(first, second) {
 
 
 // Waits until the body of the request `req` is received, then calls
-// `processFunc` with it.
-function processRequestBody(req, processFunc) {
+// `processFunc` with it. If the body is bigger than `maxBodySize`, a 413
+// response is sent instead, so that the whole body does not have to be
+// kept in memory.
+function processRequestBody(req, res, processFunc) {
   let chunks = []
+  let size = 0
   req.on("data", chunk => {
+    size += chunk.length
+    if (size > maxBodySize) {
+      if (!res.headersSent) {
+        res.writeHead(413, {'Content-Type': 'text/plain', 'Connection': 'close'})
+        res.end('The request body is too large.\n')
+      }
+      req.destroy()
+      return
+    }
     chunks.push(chunk)
   })
   req.on("end", () => {
-    processFunc(Buffer.concat(chunks))
+    if (size <= maxBodySize) {
+      processFunc(Buffer.concat(chunks))
+    }
   })
 }
 
@@ -531,7 +546,7 @@ const server = http.createServer(async (req, res) => {
   if (serversConfig) {
     if (path === reservePath && req.method === 'POST') {
       const config = serversConfig
-      processRequestBody(req, (body) => {
+      processRequestBody(req, res, (body) => {
         reserveRandomId(config, req.headers, body, res)
       })
       return
