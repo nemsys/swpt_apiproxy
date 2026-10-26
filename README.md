@@ -85,6 +85,12 @@ APIPROXY_PORT=8080
 # be detected by the API proxy, and the new configuration will be
 # loaded and applied automatically.
 APIPROXY_CONFIG_FILE=/etc/apiproxy.conf
+
+# The maximum size (in bytes) of request bodies that the proxy
+# itself has to receive in full (this is the case only for the
+# random ID reservation requests). Bigger requests will be
+# rejected with a 413 status code. The default is 65536.
+APIPROXY_MAX_BODY_SIZE=65536
 ```
 
 
